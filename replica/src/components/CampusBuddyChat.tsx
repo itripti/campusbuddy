@@ -48,7 +48,7 @@ function getTime() {
 // ============================================================
 async function fetchCollegeContext(): Promise<string> {
   try {
-    const response = await fetch(`${API_URL}/api/college-data`);
+    const response = await fetch(`${API_URL}/api/college-info`);
     if (!response.ok) return FALLBACK_CONTEXT;
     const result = await response.json();
     const data = result.data;
@@ -189,7 +189,10 @@ INSTRUCTIONS:
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "";
         const isKeyError =
-          msg.includes("401") || msg.includes("403") || msg.includes("api_key");
+          msg.toLowerCase().includes("401") ||
+          msg.toLowerCase().includes("403") ||
+          msg.toLowerCase().includes("api key") ||
+          msg.toLowerCase().includes("api_key");
         setMessages((prev) => [
           ...prev,
           {
