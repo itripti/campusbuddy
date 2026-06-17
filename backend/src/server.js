@@ -18,6 +18,7 @@ const app = express();
 app.use(cors({
   origin: [
     'https://campusbuddy-three.vercel.app',
+    'https://campusbuddy-alx53b76s-itriptis-projects.vercel.app',
     'http://localhost:3000'
   ],
   credentials: true
