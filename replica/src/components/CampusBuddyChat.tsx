@@ -2,12 +2,12 @@
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { X, Send, RotateCcw, Minimize2, Maximize2, Bot } from "lucide-react";
-import { fetchCollegeContext } from "@/lib/supabase";
 
 // ============================================================
-// 🔑 YOUR GROQ API KEY
+// API Configuration
 // ============================================================
-const GROQ_API_KEY = process.env.GROQ_API_KEY // 👈 paste your Groq key here
+const GROQ_API_KEY = process.env.NEXT_PUBLIC_GROQ_API_KEY;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 // Fallback context if MongoDB fails
 const FALLBACK_CONTEXT = `You are Campus Buddy AI for United University, Prayagraj (UU Prayagraj).
@@ -43,6 +43,32 @@ function getTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// ============================================================
+// Fetch college data from MongoDB backend
+// ============================================================
+async function fetchCollegeContext(): Promise<string> {
+  try {
+    const response = await fetch(`${API_URL}/api/college-data`);
+    if (!response.ok) return FALLBACK_CONTEXT;
+    const result = await response.json();
+    const data = result.data;
+    if (!data || data.length === 0) return FALLBACK_CONTEXT;
+
+    const grouped = data.reduce((acc: Record<string, string[]>, row: any) => {
+      if (!acc[row.category]) acc[row.category] = [];
+      acc[row.category].push(`${row.title}: ${row.content}`);
+      return acc;
+    }, {});
+
+    return Object.entries(grouped)
+      .map(([cat, items]) => `${cat}:\n${(items as string[]).join("\n")}`)
+      .join("\n\n");
+  } catch (error) {
+    console.error("Error loading college info from MongoDB:", error);
+    return FALLBACK_CONTEXT;
+  }
+}
+
 export default function CampusBuddyChat() {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -57,10 +83,10 @@ export default function CampusBuddyChat() {
   const inputRef = useRef<HTMLInputElement>(null);
   const chatWindowRef = useRef<HTMLDivElement>(null);
 
-  // Fetch college data from Supabase on mount
+  // Fetch college data from MongoDB on mount
   useEffect(() => {
     fetchCollegeContext()
-      .then(ctx => {
+      .then((ctx) => {
         setCollegeContext(ctx || FALLBACK_CONTEXT);
         setContextLoaded(true);
       })
@@ -85,36 +111,39 @@ export default function CampusBuddyChat() {
   // Welcome message on first open
   useEffect(() => {
     if (isOpen && messages.length === 0) {
-      setMessages([{
-        id: "welcome",
-        role: "bot",
-        text: "👋 Hello! I'm **Campus Buddy AI**, your smart assistant for United University, Prayagraj (UU Prayagraj)!\n\nI can help you with admissions, courses, placements, events, hostel info, and much more. What would you like to know? 🎓",
-        time: getTime(),
-      }]);
+      setMessages([
+        {
+          id: "welcome",
+          role: "bot",
+          text: "👋 Hello! I'm **Campus Buddy AI**, your smart assistant for United University, Prayagraj (UU Prayagraj)!\n\nI can help you with admissions, courses, placements, events, hostel info, and much more. What would you like to know? 🎓",
+          time: getTime(),
+        },
+      ]);
     }
   }, [isOpen]);
 
-  const sendMessage = useCallback(async (text?: string) => {
-    const userText = (text || input).trim();
-    if (!userText || loading) return;
+  const sendMessage = useCallback(
+    async (text?: string) => {
+      const userText = (text || input).trim();
+      if (!userText || loading) return;
 
-    setInput("");
-    const userMsg: Message = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      text: userText,
-      time: getTime(),
-    };
-    setMessages(prev => [...prev, userMsg]);
-    setLoading(true);
+      setInput("");
+      const userMsg: Message = {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: userText,
+        time: getTime(),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setLoading(true);
 
-    const newHistory: ChatMessage[] = [
-      ...chatHistory,
-      { role: "user", content: userText }
-    ];
+      const newHistory: ChatMessage[] = [
+        ...chatHistory,
+        { role: "user", content: userText },
+      ];
 
-    try {
-      const systemPrompt = `You are Campus Buddy AI, a smart and friendly virtual assistant for United University, Prayagraj (UU Prayagraj).
+      try {
+        const systemPrompt = `You are Campus Buddy AI, a smart and friendly virtual assistant for United University, Prayagraj (UU Prayagraj).
 
 Here is the official UU Prayagraj college data:
 
@@ -126,77 +155,85 @@ INSTRUCTIONS:
 - For missing info (fees, timetable, results), direct to admissions office or https://uniteduniversity.edu.in/
 - Always respond in the same language the user writes in`;
 
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${GROQ_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "llama-3.1-8b-instant",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...newHistory
-          ],
-          max_tokens: 500,
-          temperature: 0.75,
-        })
-      });
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "system", content: systemPrompt }, ...newHistory],
+            max_tokens: 500,
+            temperature: 0.75,
+          }),
+        });
 
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
 
-      const reply = data.choices?.[0]?.message?.content
-        || "I'm having trouble responding right now. Please try again!";
+        const reply =
+          data.choices?.[0]?.message?.content ||
+          "I'm having trouble responding right now. Please try again!";
 
-      setChatHistory([...newHistory, { role: "assistant", content: reply }]);
-      setMessages(prev => [...prev, {
-        id: `b-${Date.now()}`,
-        role: "bot",
-        text: reply,
-        time: getTime(),
-      }]);
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      const isKeyError = msg.includes("401") || msg.includes("403") || msg.includes("api_key");
-      setMessages(prev => [...prev, {
-        id: `e-${Date.now()}`,
-        role: "bot",
-        text: isKeyError
-          ? "⚠️ Groq API key invalid! Get your free key at console.groq.com"
-          : "😔 Something went wrong. Please try again!",
-        time: getTime(),
-      }]);
-    } finally {
-      setLoading(false);
-    }
-  }, [input, loading, chatHistory, collegeContext]);
+        setChatHistory([...newHistory, { role: "assistant", content: reply }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `b-${Date.now()}`,
+            role: "bot",
+            text: reply,
+            time: getTime(),
+          },
+        ]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "";
+        const isKeyError =
+          msg.includes("401") || msg.includes("403") || msg.includes("api_key");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            role: "bot",
+            text: isKeyError
+              ? "⚠️ Groq API key invalid! Get your free key at console.groq.com"
+              : "😔 Something went wrong. Please try again!",
+            time: getTime(),
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [input, loading, chatHistory, collegeContext]
+  );
 
   const handleReset = () => {
-    setMessages([{
-      id: "reset",
-      role: "bot",
-      text: "✨ Chat cleared! I'm ready to help you again. What would you like to know about UU Prayagraj? 🎓",
-      time: getTime(),
-    }]);
+    setMessages([
+      {
+        id: "reset",
+        role: "bot",
+        text: "✨ Chat cleared! I'm ready to help you again. What would you like to know about UU Prayagraj? 🎓",
+        time: getTime(),
+      },
+    ]);
     setChatHistory([]);
   };
 
   const handleToggle = () => {
-    setIsOpen(prev => !prev);
+    setIsOpen((prev) => !prev);
     setIsMinimized(false);
   };
 
   const renderText = (text: string) => {
-    return text.split('\n').map((line, i) => {
+    return text.split("\n").map((line, i) => {
       const parts = line.split(/\*\*(.*?)\*\*/g);
       return (
         <span key={i}>
           {parts.map((part, j) =>
             j % 2 === 1 ? <strong key={j}>{part}</strong> : part
           )}
-          {i < text.split('\n').length - 1 && <br />}
+          {i < text.split("\n").length - 1 && <br />}
         </span>
       );
     });
@@ -280,7 +317,7 @@ INSTRUCTIONS:
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "4px", position: "relative", zIndex: 1 }}>
                 <button onClick={handleReset} title="New chat" style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "8px", padding: "6px", cursor: "pointer", color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center" }}><RotateCcw size={14} /></button>
-                <button onClick={() => setIsMinimized(m => !m)} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "8px", padding: "6px", cursor: "pointer", color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center" }}>{isMinimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}</button>
+                <button onClick={() => setIsMinimized((m) => !m)} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "8px", padding: "6px", cursor: "pointer", color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center" }}>{isMinimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}</button>
                 <button onClick={() => setIsOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "8px", padding: "6px", cursor: "pointer", color: "rgba(255,255,255,0.8)", display: "flex", alignItems: "center" }}><X size={16} /></button>
               </div>
             </div>
@@ -338,8 +375,8 @@ INSTRUCTIONS:
                 {/* Input */}
                 <div style={{ padding: "12px 14px", background: "rgba(255,255,255,0.95)", borderTop: "1px solid rgba(12,35,64,0.06)", flexShrink: 0 }}>
                   <div className="cb-input-wrap" style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(248,250,255,0.9)", border: "1.5px solid rgba(12,35,64,0.12)", borderRadius: "14px", padding: "8px 8px 8px 14px", transition: "all 0.2s" }}>
-                    <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                    <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                       placeholder="Ask about UGI admissions, courses..."
                       style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: "13px", color: "#1e293b" }} />
                     <button className="cb-send-btn" onClick={() => sendMessage()} disabled={!input.trim() || loading}
@@ -375,10 +412,12 @@ INSTRUCTIONS:
             <div style={{ position: "absolute", inset: "3px", borderRadius: "50%", overflow: "hidden", background: "#000814", border: "2px solid rgba(255,255,255,0.15)", zIndex: 1 }}>
               <img src="/campus-buddy-robot.png" alt="Campus Buddy AI" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top" }} />
             </div>
-            {loading && <>
-              <div style={{ position: "absolute", inset: "-8px", borderRadius: "50%", border: "2px solid rgba(59,130,246,0.5)", animation: "cb-ring-spin 1.5s linear infinite" }} />
-              <div style={{ position: "absolute", inset: "-14px", borderRadius: "50%", border: "1px solid rgba(59,130,246,0.25)", animation: "cb-ring-spin-reverse 2s linear infinite" }} />
-            </>}
+            {loading && (
+              <>
+                <div style={{ position: "absolute", inset: "-8px", borderRadius: "50%", border: "2px solid rgba(59,130,246,0.5)", animation: "cb-ring-spin 1.5s linear infinite" }} />
+                <div style={{ position: "absolute", inset: "-14px", borderRadius: "50%", border: "1px solid rgba(59,130,246,0.25)", animation: "cb-ring-spin-reverse 2s linear infinite" }} />
+              </>
+            )}
             {isOpen && !loading && (
               <div style={{ position: "absolute", bottom: "2px", right: "2px", width: "18px", height: "18px", background: "#22c55e", borderRadius: "50%", border: "2px solid white", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
                 <Bot size={9} color="white" />
