@@ -5,6 +5,7 @@ import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import protectedRoutes from './routes/protectedRoutes.js';
 import collegeRoutes from './routes/collegeRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -18,7 +19,7 @@ const app = express();
 app.use(cors({
   origin: '*',
   credentials: false
-}));
+})); 7
 app.use(express.json());
 
 // Base Route
@@ -29,6 +30,7 @@ app.get('/', (req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/protected', protectedRoutes);
+app.use('/api/files', uploadRoutes);
 app.use('/api/college-info', collegeRoutes);
 
 // 404 Handler
