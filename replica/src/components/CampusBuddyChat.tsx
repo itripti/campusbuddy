@@ -162,9 +162,9 @@ INSTRUCTIONS:
             Authorization: `Bearer ${GROQ_API_KEY}`,
           },
           body: JSON.stringify({
-            model: "llama-3.1-8b-instant",
+            model: "llama3-8b-8192",
             messages: [{ role: "system", content: systemPrompt }, ...newHistory],
-            max_tokens: 500,
+            max_tokens: 1024,
             temperature: 0.75,
           }),
         });
