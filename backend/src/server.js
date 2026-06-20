@@ -7,6 +7,7 @@ import protectedRoutes from './routes/protectedRoutes.js';
 import collegeRoutes from './routes/collegeRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 
+
 // Load environment variables
 dotenv.config();
 
@@ -30,8 +31,8 @@ app.get('/', (req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/protected', protectedRoutes);
-app.use('/api/files', uploadRoutes);
 app.use('/api/college-info', collegeRoutes);
+app.use('/api/files', uploadRoutes);
 
 // 404 Handler
 app.use((req, res, next) => {
