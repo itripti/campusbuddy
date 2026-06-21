@@ -3,13 +3,9 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { X, Send, RotateCcw, Minimize2, Maximize2, Bot } from "lucide-react";
 
-// ============================================================
-// API Configuration
-// ============================================================
 const GROQ_API_KEY = process.env.NEXT_PUBLIC_GROQ_API_KEY;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
-// Fallback context if MongoDB fails
 const FALLBACK_CONTEXT = `You are Campus Buddy AI for United University, Prayagraj (UU Prayagraj).
 UU Prayagraj is a State Private University established in 2021.
 Campus size is 250 acres.
@@ -43,26 +39,40 @@ function getTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// ============================================================
-// Fetch college data from MongoDB backend
-// ============================================================
 async function fetchCollegeContext(): Promise<string> {
   try {
-    const response = await fetch(`${API_URL}/api/college-info`);
-    if (!response.ok) return FALLBACK_CONTEXT;
-    const result = await response.json();
-    const data = result.data;
-    if (!data || data.length === 0) return FALLBACK_CONTEXT;
+    const [collegeRes, docsRes] = await Promise.all([
+      fetch(`${API_URL}/api/college-info`),
+      fetch(`${API_URL}/api/files/documents`),
+    ]);
 
-    const grouped = data.reduce((acc: Record<string, string[]>, row: any) => {
-      if (!acc[row.category]) acc[row.category] = [];
-      acc[row.category].push(`${row.title}: ${row.content}`);
-      return acc;
-    }, {});
+    const collegeData = await collegeRes.json();
+    const docsData = await docsRes.json();
 
-    return Object.entries(grouped)
-      .map(([cat, items]) => `${cat}:\n${(items as string[]).join("\n")}`)
-      .join("\n\n");
+    let context = "";
+
+    if (collegeData.data && collegeData.data.length > 0) {
+      const grouped = collegeData.data.reduce(
+        (acc: Record<string, string[]>, row: any) => {
+          if (!acc[row.category]) acc[row.category] = [];
+          acc[row.category].push(`${row.title}: ${row.content}`);
+          return acc;
+        },
+        {}
+      );
+      context = Object.entries(grouped)
+        .map(([cat, items]) => `${cat}:\n${(items as string[]).join("\n")}`)
+        .join("\n\n");
+    }
+
+    if (docsData.data && docsData.data.length > 0) {
+      context += "\n\nPYQ & STUDY MATERIALS:\n";
+      docsData.data.forEach((doc: any) => {
+        context += `${doc.title}: ${doc.content} - Download Link: ${doc.fileUrl}\n`;
+      });
+    }
+
+    return context || FALLBACK_CONTEXT;
   } catch (error) {
     console.error("Error loading college info from MongoDB:", error);
     return FALLBACK_CONTEXT;
@@ -83,7 +93,6 @@ export default function CampusBuddyChat() {
   const inputRef = useRef<HTMLInputElement>(null);
   const chatWindowRef = useRef<HTMLDivElement>(null);
 
-  // Fetch college data from MongoDB on mount
   useEffect(() => {
     fetchCollegeContext()
       .then((ctx) => {
@@ -96,19 +105,16 @@ export default function CampusBuddyChat() {
       });
   }, []);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Focus input when chat opens
   useEffect(() => {
     if (isOpen && !isMinimized) {
       setTimeout(() => inputRef.current?.focus(), 200);
     }
   }, [isOpen, isMinimized]);
 
-  // Welcome message on first open
   useEffect(() => {
     if (isOpen && messages.length === 0) {
       setMessages([
@@ -153,21 +159,30 @@ INSTRUCTIONS:
 - Answer questions using the college data above
 - Be friendly, enthusiastic and concise (2-4 sentences)
 - For missing info (fees, timetable, results), direct to admissions office or https://uniteduniversity.edu.in/
-- Always respond in the same language the user writes in`;
+- Always respond in the same language the user writes in
+- If user asks for PYQ or question papers, ALWAYS provide the exact download link from the data above
+- Never say links are not available - the links are in the college data above
+- Format links clearly: "Download here: [URL]"`;
 
-        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${GROQ_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "llama-3.1-8b-instant",
-            messages: [{ role: "system", content: systemPrompt }, ...newHistory],
-            max_tokens: 1024,
-            temperature: 0.75,
-          }),
-        });
+        const res = await fetch(
+          "https://api.groq.com/openai/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${GROQ_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: "llama-3.1-8b-instant",
+              messages: [
+                { role: "system", content: systemPrompt },
+                ...newHistory,
+              ],
+              max_tokens: 1024,
+              temperature: 0.75,
+            }),
+          }
+        );
 
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
@@ -189,10 +204,9 @@ INSTRUCTIONS:
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "";
         const isKeyError =
-          msg.toLowerCase().includes("401") ||
-          msg.toLowerCase().includes("403") ||
-          msg.toLowerCase().includes("api key") ||
-          msg.toLowerCase().includes("api_key");
+          msg.includes("401") ||
+          msg.includes("403") ||
+          msg.includes("api_key");
         setMessages((prev) => [
           ...prev,
           {
@@ -295,12 +309,10 @@ INSTRUCTIONS:
 
       <div style={{ position: "fixed", top: "20px", right: "20px", zIndex: 99999, display: "flex", flexDirection: "column", alignItems: "flex-end", fontFamily: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}>
 
-        {/* CHAT WINDOW */}
         {isOpen && (
           <div ref={chatWindowRef} className="cb-chat-open cb-glass"
             style={{ width: "clamp(300px, 90vw, 380px)", height: isMinimized ? "auto" : "560px", borderRadius: "20px", overflow: "hidden", display: "flex", flexDirection: "column", marginBottom: "16px", border: "1px solid rgba(12,35,64,0.12)", boxShadow: "0 24px 80px rgba(0,0,0,0.18), 0 8px 32px rgba(12,35,64,0.12)" }}>
 
-            {/* Header */}
             <div style={{ background: "linear-gradient(135deg, #0c2340 0%, #1a3a6b 60%, #0c2340 100%)", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative", overflow: "hidden", flexShrink: 0 }}>
               <div style={{ position: "absolute", top: "-20px", right: "40px", width: "80px", height: "80px", background: "rgba(212,175,55,0.08)", borderRadius: "50%", filter: "blur(20px)" }} />
               <div style={{ display: "flex", alignItems: "center", gap: "10px", position: "relative", zIndex: 1 }}>
@@ -327,7 +339,6 @@ INSTRUCTIONS:
 
             {!isMinimized && (
               <>
-                {/* Messages */}
                 <div className="cb-scrollbar" style={{ flex: 1, overflowY: "auto", padding: "16px 14px", display: "flex", flexDirection: "column", gap: "12px", background: "linear-gradient(180deg, #f8faff 0%, #f1f5ff 100%)" }}>
                   {messages.map((msg) => (
                     <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
@@ -360,7 +371,6 @@ INSTRUCTIONS:
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Quick Questions */}
                 {messages.length <= 1 && !loading && (
                   <div style={{ padding: "10px 14px", background: "rgba(248,250,255,0.95)", borderTop: "1px solid rgba(12,35,64,0.06)" }}>
                     <p style={{ fontSize: "10px", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "8px" }}>Quick Questions</p>
@@ -375,7 +385,6 @@ INSTRUCTIONS:
                   </div>
                 )}
 
-                {/* Input */}
                 <div style={{ padding: "12px 14px", background: "rgba(255,255,255,0.95)", borderTop: "1px solid rgba(12,35,64,0.06)", flexShrink: 0 }}>
                   <div className="cb-input-wrap" style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(248,250,255,0.9)", border: "1.5px solid rgba(12,35,64,0.12)", borderRadius: "14px", padding: "8px 8px 8px 14px", transition: "all 0.2s" }}>
                     <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
@@ -394,7 +403,6 @@ INSTRUCTIONS:
           </div>
         )}
 
-        {/* FLOATING AVATAR */}
         <div className="cb-avatar-wrap" style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", position: "relative" }}
           onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} onClick={handleToggle}>
 
